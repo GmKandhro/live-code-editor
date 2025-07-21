@@ -33,9 +33,19 @@ const mountJoinRoomEvent = (socket: AuthSocket) => {
         if (!room.users.includes(userId)) {
           room.users.push(userId);
           await room.save();
-          socket
-            .to(roomId)
-            .emit(ChatEventEnum.USER_UPDATE_EVENT, { users: room.users });
+          // Fetch all users asynchronously and handle possible nulls
+          const users = await Promise.all(
+            room.users.map(async (id) => {
+              const user = await User.findById(id);
+              return {
+                _id: id,
+                username: user ? user.username : "Unknown",
+              };
+            })
+          );
+          socket.to(roomId).emit(ChatEventEnum.USER_UPDATE_EVENT, {
+            users,
+          });
         }
         socket.emit(ChatEventEnum.INITIAL_CODE_EVENT, {
           code: room.code,
@@ -105,15 +115,24 @@ const mountCodeUpdateEvent = (socket: AuthSocket) => {
 
 const mountTypingEvents = (socket: AuthSocket) => {
   socket.on(ChatEventEnum.TYPING_EVENT, (roomId: string) => {
-    socket
-      .to(roomId)
-      .emit(ChatEventEnum.TYPING_EVENT, { userId: socket.user?._id });
+    socket.to(roomId).emit(ChatEventEnum.TYPING_EVENT, {
+      userId: socket.user?._id,
+      username: socket.user?.username,
+    });
   });
 
   socket.on(ChatEventEnum.STOP_TYPING_EVENT, (roomId: string) => {
-    socket
-      .to(roomId)
-      .emit(ChatEventEnum.STOP_TYPING_EVENT, { userId: socket.user?._id });
+    socket.to(roomId).emit(ChatEventEnum.STOP_TYPING_EVENT, {
+      userId: socket.user?._id,
+      username: socket.user?.username,
+    });
+  });
+};
+
+const mountChatEvents = (socket: AuthSocket) => {
+  socket.on("chatMessage", ({ roomId, message, username }) => {
+    socket.to(roomId).emit("chatMessage", { username, message });
+    console.log(`Chat message from ${username} in room ${roomId}: ${message}`);
   });
 };
 
@@ -123,11 +142,10 @@ export const initializeSocketIO = (io: Server): void => {
       const rawCookie = socket.handshake.headers?.cookie || "";
       const cookies = require("cookie").parse(rawCookie);
       console.log("Parsed cookies:", cookies);
-      let token = cookies?.access_token || socket.handshake.auth?.token;
+      let token = cookies?.access_token || socket.handshake.auth?.token || "";
       if (!token) {
-        return next(
-          new ErrorHandler("Un-authorized handshake. Token is missing", 401)
-        );
+        console.warn("No token provided, proceeding without authentication");
+        return next();
       }
 
       const decodedToken = jwt.verify(
@@ -157,18 +175,77 @@ export const initializeSocketIO = (io: Server): void => {
   });
 
   io.on("connection", (socket: AuthSocket) => {
-    console.log(`User connected: ${socket.user?._id}`);
+    console.log(
+      `User connected: ${socket.user?._id} (${socket.user?.username})`
+    );
+
+    const { roomId, userId, username } = socket.handshake.auth;
+    socket.join(roomId);
+
+    socket.on(ChatEventEnum.JOIN_ROOM_EVENT, ({ roomId }) => {
+      socket.broadcast
+        .to(roomId)
+        .emit(ChatEventEnum.USER_UPDATE_EVENT, {
+          users: [{ userId, username }],
+        });
+    });
+
+    socket.on(ChatEventEnum.USER_UPDATE_EVENT, ({ roomId, users }) => {
+      socket.broadcast
+        .to(roomId)
+        .emit(ChatEventEnum.USER_UPDATE_EVENT, { users });
+    });
+
+    socket.on(
+      "chatMessage",
+      ({ roomId, message, username, recipientId, senderId }) => {
+        io.to(`${roomId}_${recipientId}`).emit("chatMessage", {
+          username,
+          message,
+          recipientId: senderId,
+        });
+      }
+    );
 
     socket.emit(ChatEventEnum.CONNECTED_EVENT);
 
     mountJoinRoomEvent(socket);
     mountCodeUpdateEvent(socket);
     mountTypingEvents(socket);
+    mountChatEvents(socket);
 
-    socket.on(ChatEventEnum.DISCONNECT_EVENT, () => {
+    socket.on(ChatEventEnum.DISCONNECT_EVENT, async () => {
       if (socket.user?._id) {
         socket.leave(socket.user._id.toString());
-        console.log(`User disconnected: ${socket.user._id}`);
+        console.log(
+          `User disconnected: ${socket.user._id} (${socket.user?.username})`
+        );
+        const rooms = socket.rooms;
+        for (const roomId of rooms) {
+          if (roomId !== socket.user._id.toString()) {
+            const room = await Room.findOne({ roomId });
+            if (room && room.users.includes(socket.user._id.toString())) {
+              if (socket.user && socket.user._id) {
+                room.users = room.users.filter(
+                  (id) => id !== socket.user!._id!.toString()
+                );
+              }
+              await room.save();
+              const users = await Promise.all(
+                room.users.map(async (id) => {
+                  const user = await User.findById(id);
+                  return {
+                    _id: id,
+                    username: user ? user.username : "Unknown",
+                  };
+                })
+              );
+              socket
+                .to(roomId)
+                .emit(ChatEventEnum.USER_UPDATE_EVENT, { users });
+            }
+          }
+        }
       }
     });
   });

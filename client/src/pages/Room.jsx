@@ -10,6 +10,7 @@ export default function Room() {
     const [error, setError] = useState('');
     const navigate = useNavigate();
     const userId = Cookies.get('userId') || '';
+    const username = Cookies.get('username') || userId; // Fallback to userId if username not set
 
     useEffect(() => {
         const fetchRoom = async () => {
@@ -19,7 +20,11 @@ export default function Room() {
             }
             try {
                 const data = await joinRoom(roomId);
-                setRoom(data);
+                const usersWithNames = await Promise.all(data.users.map(async (id) => {
+                    const user = await (await fetch(`${import.meta.env.VITE_API_URL}/api/auth/${id}`)).json();
+                    return user.username || id;
+                }));
+                setRoom({ ...data, users: usersWithNames });
             } catch (err) {
                 setError(err.response?.data?.message || 'Error joining room');
                 navigate('/dashboard');
@@ -33,7 +38,7 @@ export default function Room() {
     }
 
     if (!room) {
-        return <div className="min-h-screen bg-gray-100 flex items-center justify-center">Loading...</div>;
+        return <div className="min-h-screen flex items-center justify-center text-white">Loading...</div>;
     }
 
     return (
@@ -48,6 +53,7 @@ export default function Room() {
                     initialCode={room.code}
                     initialLanguage={room.language}
                     userId={userId}
+                    username={username}
                 />
             </div>
         </div>

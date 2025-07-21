@@ -5,23 +5,58 @@ import { ChatEventEnum } from "../constants";
 
 export const useSocket = (roomId, events) => {
   const socketRef = useRef(null);
-  console.log("cookies", Cookies.get("token"));
+
+  console.log(
+    "useSocket initialized with roomId:",
+    roomId,
+    "and events:",
+    events
+  );
+
   useEffect(() => {
     if (!roomId) return;
-    console.log(
-      "Connecting to socket for room:",
-      roomId,
-      import.meta.env.VITE_SOCKET_URL
-    );
+
+    console.log("Connecting to Socket.IO at:", import.meta.env.VITE_SOCKET_URL);
+
+    const token = Cookies.get("access_token");
+    console.log("Token:", token);
+
+    if (!token) {
+      console.error("No access token found, connection will likely fail");
+    }
+
     socketRef.current = io(import.meta.env.VITE_SOCKET_URL, {
-      auth: { token: Cookies.get("access_token") },
+      auth: {
+        token: token || "",
+        userId: Cookies.get("userId"),
+        username: Cookies.get("username"),
+      },
+      transports: ["websocket", "polling"],
       withCredentials: true,
-      transports: ["websocket"],
+    });
+
+    socketRef.current.on("connect", () => {
+      console.log("Socket connected");
+      socketRef.current.emit(ChatEventEnum.JOIN_ROOM_EVENT, { roomId });
+      socketRef.current.emit(ChatEventEnum.USER_UPDATE_EVENT, {
+        roomId,
+        users: [
+          { userId: Cookies.get("userId"), username: Cookies.get("username") },
+        ],
+      });
+    });
+
+    socketRef.current.on("connect_error", (err) => {
+      console.error("Socket connection error:", err.message);
     });
 
     socketRef.current.on(ChatEventEnum.CONNECTED_EVENT, () => {
-      console.log("Socket connected");
-      socketRef.current.emit(ChatEventEnum.JOIN_ROOM_EVENT, { roomId });
+      console.log("Received connected event");
+    });
+
+    socketRef.current.on(ChatEventEnum.SOCKET_ERROR_EVENT, (err) => {
+      console.error("Socket error:", err);
+      events.onError(err);
     });
 
     socketRef.current.on(
@@ -36,9 +71,10 @@ export const useSocket = (roomId, events) => {
     );
     socketRef.current.on(ChatEventEnum.TYPING_EVENT, events.onTyping);
     socketRef.current.on(ChatEventEnum.STOP_TYPING_EVENT, events.onStopTyping);
-    socketRef.current.on(ChatEventEnum.SOCKET_ERROR_EVENT, events.onError);
+    socketRef.current.on("chatMessage", events.onChatMessage);
 
     return () => {
+      console.log("Disconnecting socket");
       socketRef.current?.disconnect();
     };
   }, [roomId]);
@@ -59,5 +95,27 @@ export const useSocket = (roomId, events) => {
     socketRef.current?.emit(ChatEventEnum.STOP_TYPING_EVENT, roomId);
   };
 
-  return { emitCodeUpdate, emitTyping, emitStopTyping };
+  const emitChatMessage = ({ message, recipientId }) => {
+    socketRef.current?.emit("chatMessage", {
+      roomId,
+      message,
+      username: Cookies.get("username") || "",
+      recipientId,
+      senderId: Cookies.get("userId") || "", // Fixed case to match prop
+    });
+    // Emit user update to refresh the user list
+    socketRef.current.emit(ChatEventEnum.USER_UPDATE_EVENT, {
+      roomId,
+      users: [
+        { userId: Cookies.get("userId"), username: Cookies.get("username") },
+      ],
+    });
+  };
+
+  return {
+    emitCodeUpdate,
+    emitTyping,
+    emitStopTyping,
+    emitChatMessage,
+  };
 };

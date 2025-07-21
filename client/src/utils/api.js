@@ -27,6 +27,7 @@ export const login = async (data) => {
   const response = await api.post("/api/auth/login", data);
   Cookies.set("access_token", response.data.token, { expires: 7 });
   Cookies.set("userId", response.data.userId, { expires: 7 });
+  Cookies.set("username", response.data.username, { expires: 7 }); // Add username
   return response.data;
 };
 
@@ -61,4 +62,5 @@ export const deleteRoom = async (roomId) => {
 export const logout = () => {
   Cookies.remove("access_token");
   Cookies.remove("userId");
+  Cookies.remove("username");
 };

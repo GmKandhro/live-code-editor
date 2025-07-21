@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import userModel from "../models/user.model";
+import { errorHandler } from "../middlewares/errorHandler.middleware";
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -30,6 +31,29 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     );
 
     res.status(201).json({ token, userId: user._id, username: user.username });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Server error", error: (error as Error).message });
+  }
+};
+
+export const getUserById = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ message: "User ID is required" });
+      return;
+    }
+    const user = await userModel.findById(id).select("username");
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+    res.json(user);
   } catch (error) {
     res
       .status(500)

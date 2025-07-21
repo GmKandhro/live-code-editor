@@ -11,7 +11,10 @@ export const authMiddleware = (
   next: NextFunction
 ): void => {
   // console.log("", req.cookies, req.headers.Authorization);
-  const token = req?.cookies?.token || req.headers.authorization?.split(" ")[1];
+  const token =
+    req?.cookies?.token ||
+    req?.cookies?.access_token ||
+    req.headers.authorization?.split(" ")[1];
   // console.log("Token:", token);
   if (!token) {
     res.status(401).json({ message: "Plz loin to access" });

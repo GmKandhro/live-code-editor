@@ -26,6 +26,7 @@ const UserSchema: Schema = new Schema({
     trim: true,
     minlength: [3, "Username must be at least 3 characters"],
     maxlength: [20, "Username cannot exceed 20 characters"],
+    unique: true,
   },
   createdAt: {
     type: Date,
